@@ -1,0 +1,247 @@
+[
+    {
+        "id": "silence_comment",
+        "type": "comment",
+        "z": "frigate_ai_tab",
+        "name": "=== SILENCE ACTION HANDLER ===",
+        "info": "Handles the \"Silence\" button pressed on a Frigate notification.\n\nFlow:\n1. Listen for mobile_app_notification_action events from HA\n2. Filter for actions matching SILENCE_frigate_ai__<camera>\n3. Extract camera name and parse duration (iOS text input or default)\n4. Fetch current silence table from HA input_text entity\n5. Merge new silence entry (preserving any longer existing silence)\n6. Write updated silence table back to HA\n7. Clear the notification on all configured devices",
+        "x": 150,
+        "y": 1860,
+        "wires": []
+    },
+    {
+        "id": "ha_silence_action",
+        "type": "server-events",
+        "z": "frigate_ai_tab",
+        "name": "HA Notification Actions",
+        "server": "58094f2d.254d4",
+        "version": 3,
+        "exposeAsEntityConfig": "",
+        "eventType": "mobile_app_notification_action",
+        "eventData": "",
+        "waitForRunning": true,
+        "outputProperties": [
+            {
+                "property": "payload",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "eventData"
+            }
+        ],
+        "x": 150,
+        "y": 1900,
+        "wires": [
+            [
+                "filter_silence_action"
+            ]
+        ]
+    },
+    {
+        "id": "filter_silence_action",
+        "type": "function",
+        "z": "frigate_ai_tab",
+        "name": "Filter Silence Actions",
+        "func": "// ============================================================================\n// Filter: Silence Actions\n// ============================================================================\n// Purpose: Passes through only notification action events that are silence\n//          requests (SILENCE_frigate_ai__*). All other mobile_app actions\n//          (e.g., URI taps, other custom actions) are dropped.\n// Input:   msg.payload.event (from HA mobile_app_notification_action)\n// Output:  msg if silence action, null otherwise.\n// ============================================================================\n\nconst action = (msg.payload && msg.payload.event && msg.payload.event.action) || '';\n\nif (action.startsWith('SILENCE_frigate_ai__')) {\n    return msg;\n}\n\nreturn null;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 1900,
+        "wires": [
+            [
+                "handle_silence"
+            ]
+        ]
+    },
+    {
+        "id": "handle_silence",
+        "type": "function",
+        "z": "frigate_ai_tab",
+        "name": "Parse Silence Request",
+        "func": "// ============================================================================\n// Parse Silence Request\n// ============================================================================\n// Purpose: Extracts the camera name and silence duration from the notification\n//          action event. The action identifier format is:\n//            SILENCE_frigate_ai__<camera_name>\n//          On iOS, the user can type a custom duration (minutes) via the\n//          inline text input on the Silence button. On Android (no text\n//          input), the default duration is used.\n// Input:   msg.payload.event (action, reply_text, tag, group)\n// Output:  msg with camera, silenceMin, silenceUntil, tag, group.\n// ============================================================================\n\nconst config = global.get('frigate_config') || {};\nconst event = msg.payload.event || {};\nconst action = event.action || '';\nconst replyText = event.reply_text || '';\n\n// Extract camera name from action identifier\nconst prefix = 'SILENCE_frigate_ai__';\nif (!action.startsWith(prefix)) {\n    return null;\n}\n\nconst camera = action.substring(prefix.length);\n\n// Parse silence duration from iOS text input, or use default (15 min).\n// Clamped to 1-120 minutes to prevent accidental extreme values.\nlet silenceMin = 15;\nif (replyText && /^\\d+$/.test(replyText.trim())) {\n    silenceMin = Math.min(Math.max(parseInt(replyText.trim()), 1), 120);\n}\n\nmsg.camera = camera;\nmsg.silenceMin = silenceMin;\nmsg.silenceUntil = Math.floor(Date.now() / 1000) + (silenceMin * 60);\nmsg.tag = event.tag || '';\nmsg.group = event.group || '';\n\nif (config.debug) {\n    node.warn(`[Frigate:Silence] User silenced \"${camera}\" for ${silenceMin} min`);\n}\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 680,
+        "y": 1900,
+        "wires": [
+            [
+                "get_current_silence"
+            ]
+        ]
+    },
+    {
+        "id": "get_current_silence",
+        "type": "api-current-state",
+        "z": "frigate_ai_tab",
+        "name": "Get Silence Table",
+        "server": "58094f2d.254d4",
+        "version": 3,
+        "outputs": 1,
+        "halt_if": "",
+        "halt_if_type": "str",
+        "halt_if_compare": "is",
+        "entity_id": "input_text.frigate_silence_table",
+        "state_type": "str",
+        "blockInputOverrides": false,
+        "outputProperties": [
+            {
+                "property": "currentSilence",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "entityState"
+            }
+        ],
+        "for": "0",
+        "forType": "num",
+        "forUnits": "minutes",
+        "override_topic": false,
+        "state_location": "payload",
+        "override_payload": "msg",
+        "entity_location": "data",
+        "override_data": "msg",
+        "x": 910,
+        "y": 1900,
+        "wires": [
+            [
+                "update_silence"
+            ]
+        ]
+    },
+    {
+        "id": "update_silence",
+        "type": "function",
+        "z": "frigate_ai_tab",
+        "name": "Merge Silence Entry",
+        "func": "// ============================================================================\n// Merge Silence Entry\n// ============================================================================\n// Purpose: Merges the new silence entry into the existing silence table and\n//          builds an HA service call to persist it. Uses Math.max to preserve\n//          any existing silence that extends beyond the new request (e.g., a\n//          prior 60-min silence won't be shortened by a new 15-min click).\n// Input:   msg.camera, msg.silenceUntil, msg.currentSilence (HA entity state)\n// Output:  msg.payload with HA service call to write the updated table.\n// ============================================================================\n\nconst config = global.get('frigate_config') || {};\n\n// Parse current silence table from HA input_text entity.\n// Single quotes are normalized to double quotes (HA may store them that way).\nlet silenceTable = {};\ntry {\n    const raw = msg.currentSilence || '{}';\n    if (raw && raw !== 'unknown' && raw !== 'unavailable') {\n        silenceTable = JSON.parse(raw.replace(/'/g, '\"'));\n    }\n} catch (e) {\n    if (config.debug) {\n        node.warn(`[Frigate:Silence] Failed to parse silence table: ${e.message}`);\n    }\n    silenceTable = {};\n}\n\n// Preserve any existing silence that extends beyond the new request.\n// If the camera was already silenced for 60 min and the user now clicks\n// silence for 15 min, the longer window is kept.\nconst existing = silenceTable[msg.camera] || 0;\nsilenceTable[msg.camera] = Math.max(existing, msg.silenceUntil);\n\nmsg.payload = {\n    action: 'input_text.set_value',\n    data: {\n        entity_id: config.silence_table || 'input_text.frigate_silence_table',\n        value: JSON.stringify(silenceTable)\n    }\n};\n\nif (config.debug) {\n    const until = new Date(silenceTable[msg.camera] * 1000).toISOString();\n    node.warn(`[Frigate:Silence] Silence table updated: \"${msg.camera}\" until ${until}`);\n}\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1140,
+        "y": 1900,
+        "wires": [
+            [
+                "silence_service_call"
+            ]
+        ]
+    },
+    {
+        "id": "silence_service_call",
+        "type": "api-call-service",
+        "z": "frigate_ai_tab",
+        "name": "Write Silence Table",
+        "server": "58094f2d.254d4",
+        "version": 7,
+        "debugenabled": false,
+        "action": "input_text.set_value",
+        "floorId": [],
+        "areaId": [],
+        "deviceId": [],
+        "entityId": [],
+        "labelId": [],
+        "data": "",
+        "dataType": "jsonata",
+        "mergeContext": "",
+        "mustacheAltTags": false,
+        "outputProperties": [],
+        "queue": "none",
+        "blockInputOverrides": false,
+        "domain": "input_text",
+        "service": "set_value",
+        "x": 1350,
+        "y": 1900,
+        "wires": [
+            [
+                "f940372c74cc54cc"
+            ]
+        ]
+    },
+    {
+        "id": "f940372c74cc54cc",
+        "type": "function",
+        "z": "frigate_ai_tab",
+        "name": "Build Notification Clears",
+        "func": "// ============================================================================\n// Build Notification Clears\n// ============================================================================\n// Purpose: Sends a clear_notification command to each configured device to\n//          dismiss the notification the user interacted with. Uses the\n//          notification tag (event ID) to clear that specific notification.\n//          Other active notifications from the same camera are left in place\n//          but will stop updating (blocked by the silence check in step 7).\n// Input:   msg.tag (event ID), msg.group (camera name), config.notify_devices\n// Output:  Array of messages — one clear command per device.\n// ============================================================================\n\nconst config = global.get('frigate_config') || {};\nconst messages = [];\n\nfor (const device of config.notify_devices) {\n    const notifyService = device[0].startsWith('notify.')\n        ? device[0]\n        : `notify.${device[0]}`;\n\n    messages.push({\n        payload: {\n            action: notifyService,\n            data: {\n                message: 'clear_notification',\n                data: {\n                    tag: msg.tag\n                }\n            }\n        }\n    });\n}\n\n// Return [messages] to send all clears to the downstream service call node.\n// Node-RED sends each message in the array independently to output 1.\nreturn [messages];",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1570,
+        "y": 1900,
+        "wires": [
+            [
+                "0f60281bd6d025d7"
+            ]
+        ]
+    },
+    {
+        "id": "0f60281bd6d025d7",
+        "type": "api-call-service",
+        "z": "frigate_ai_tab",
+        "name": "Send Notification Clears",
+        "server": "58094f2d.254d4",
+        "version": 7,
+        "debugenabled": false,
+        "action": "",
+        "floorId": [],
+        "areaId": [],
+        "deviceId": [],
+        "entityId": [],
+        "labelId": [],
+        "data": "",
+        "dataType": "jsonata",
+        "mergeContext": "",
+        "mustacheAltTags": false,
+        "outputProperties": [],
+        "queue": "none",
+        "blockInputOverrides": false,
+        "domain": "notify",
+        "service": "",
+        "x": 1830,
+        "y": 1900,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "58094f2d.254d4",
+        "type": "server",
+        "name": "Home Assistant",
+        "version": 5,
+        "rejectUnauthorizedCerts": true,
+        "ha_boolean": "y|yes|true|on|home|open",
+        "connectionDelay": false,
+        "cacheJson": true,
+        "heartbeat": false,
+        "heartbeatInterval": 30,
+        "areaSelector": "friendlyName",
+        "deviceSelector": "friendlyName",
+        "entitySelector": "friendlyName",
+        "statusSeparator": "at: ",
+        "statusYear": "hidden",
+        "statusMonth": "short",
+        "statusDay": "numeric",
+        "statusHourCycle": "h23",
+        "statusTimeFormat": "h:m",
+        "enableGlobalContextStore": true
+    },
+    {
+        "id": "24bea10cf7e6826f",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-contrib-home-assistant-websocket": "0.78.2"
+        }
+    }
+]

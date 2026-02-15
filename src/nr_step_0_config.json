@@ -1,0 +1,71 @@
+{
+    "cameras": [
+        "camera_1",
+        "camera_2",
+        "camera_3",
+        "camera_5",
+        "camera_6",
+        "camera_8"
+    ],
+    "labels": [
+        "person",
+        "car"
+    ],
+    "exclude_sub_labels": [
+        ["car", "Tom"]
+    ],
+
+    "zones": [],
+    "zones_exclude": [
+        "Garage Door"
+    ],
+    "zone_match_type": "entered",
+    "zone_logic": "any",
+    "exclude_initial_zones": [],
+    "require_initial_zones": [],
+
+    "min_score": 0.6,
+    "score_improvement_pct": 0.02,
+    "require_clip": false,
+    "require_not_false_positive": true,
+
+    "camera_overrides": {
+        "camera_8": {
+            "exclude_initial_zones": ["Ingress"]
+        }
+    },
+
+    "notify_devices": [
+        [
+            "mobile_app_tom_cell",
+            "android"
+        ]
+    ],
+    "auto_silence_secs": 25,
+    "notification_timeout_hours": 24,
+
+    "expand_cam": true,
+    "append_camera": false,
+
+    "provider": "",
+    "model": "gemini-2.0-flash",
+    "max_frames": 3,
+    "max_tokens": 20,
+    "temperature": 0.1,
+    "target_width": 1920,
+    "frigate_retry_attempts": 5,
+    "frigate_retry_seconds": 60,
+    "expose_images": true,
+    "generate_title": true,
+    "include_filename": false,
+    "prompt": "Summarize the observed events using clear, neutral third-person language. Use timestamps to ensure the summary follows the correct chronological order. Focus on moving subjects such as people, vehicles, animals, packages, equipment, or other active elements. Ignore static background objects unless directly interacted with. Include stationary vehicles only if they are clearly identifiable as delivery or emergency vehicles, mentioning any visible company names or uniform details. Describe activity relevant to the general monitored area without referencing camera angles, timestamps, or observers. Present the events as if witnessed in real time, avoiding frame-by-frame descriptions or introductory phrases. Summarize naturally in a single, cohesive narrative, keeping it concise and suitable for brief notifications.",
+
+    "silence_table": "input_text.frigate_silence_table",
+    "busy_helper": "input_boolean.frigate_llm_busy",
+
+    "base_url": "https://myha.duckdns.org",
+    "local_url": "http://192.168.55.3:8123",
+    "frigate_url": "http://192.168.55.4:5000",
+
+    "debug": true
+}
