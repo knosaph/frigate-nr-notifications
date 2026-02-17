@@ -30,8 +30,8 @@
     "require_not_false_positive": true,
 
     "camera_overrides": {
-        "camera_8": {
-            "exclude_initial_zones": ["Ingress"]
+        "camera_3": {
+            "exclude_initial_zones": ["ingress"]
         }
     },
 

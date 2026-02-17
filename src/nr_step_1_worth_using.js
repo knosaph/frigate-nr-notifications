@@ -32,6 +32,19 @@ if (type === 'end') {
     return msg;
 }
 
+// --- Event viability gate ---
+// Frigate's MQTT topic publishes all raw detections, including those it will
+// never persist (masked objects, truly stationary detections). These have
+// has_snapshot=false and position_changes=0 throughout their lifecycle.
+// Filter them out to avoid notifications linking to "Event not found."
+// See: https://github.com/blakeblackshear/frigate/discussions/19135
+if (!after.has_snapshot || (after.position_changes || 0) < 1) {
+    if (config.debug) {
+        node.warn(`[Frigate:ChangeDetect] Event not yet viable (has_snapshot=${after.has_snapshot}, position_changes=${after.position_changes}) — skipping`);
+    }
+    return null;
+}
+
 // --- For "new" and "update" events, require a meaningful change ---
 
 // False positive cleared — Frigate initially marks every new detection as a
@@ -66,15 +79,23 @@ const scoreAfter = after.top_score || after.score || 0;
 const improvementPct = config.score_improvement_pct || 0.02;
 const scoreImproved = scoreAfter > scoreBefore * (1 + improvementPct);
 
+// A previous "new" event was deferred by Step 5 (zone filtering) because
+// exclude_initial_zones was configured but entered_zones was empty — zone
+// data wasn't available yet. Re-admit this event so the pipeline can
+// evaluate it now that at least one MQTT cycle has passed.
+const eventId = after.id || before.id || '';
+const deferredZoneCheck = flow.get('deferred_zone_' + eventId) === true;
+
 // --- Decision ---
 // Always pass: detection confirmed (FP cleared), clip became available,
-// or object entered a new zone.
+// object entered a new zone, or a deferred zone check needs re-evaluation.
 // Conditionally pass: sub-label or current-zone change, but only if score
 // also improved (prevents noise from minor zone-boundary fluttering).
 const shouldUpdate =
     fpCleared ||
     hasClipBecameTrue ||
     enteredZonesChanged ||
+    deferredZoneCheck ||
     ((subLabelChanged || currentZonesChanged) && scoreImproved);
 
 if (!shouldUpdate) {

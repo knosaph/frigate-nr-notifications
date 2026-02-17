@@ -50,16 +50,38 @@ function globToRegex(pattern) {
 
 // ---- Stage 1: Directional Exclusion (exclude_initial_zones) ----
 // Drop if the object's FIRST entered zone matches any exclusion pattern.
+// For "new" events where entered_zones is still empty, defer: drop this
+// event but set a flow context flag so Step 1 re-admits the next update
+// for a second evaluation once zone data is available.
 const excludeInitial = config.exclude_initial_zones || [];
 
-if (excludeInitial.length > 0 && data.enteredZones.length > 0) {
-    const firstZone = data.enteredZones[0];
-    const matched = excludeInitial.find(p => globToRegex(p).test(firstZone));
-    if (matched) {
-        if (config.debug) {
-            node.warn(`[Frigate:ZoneFilter] Initial zone "${firstZone}" matched exclude_initial_zones pattern "${matched}" — dropping`);
+if (excludeInitial.length > 0) {
+    const deferKey = 'deferred_zone_' + data.id;
+
+    // Always clean up the deferred flag when we reach this point —
+    // either we'll evaluate properly or we'll set a fresh deferral.
+    flow.set(deferKey, undefined);
+
+    if (data.enteredZones.length === 0) {
+        if (data.event.type === 'new') {
+            // First event, no zone data yet — defer to next update.
+            flow.set(deferKey, true);
+            if (config.debug) {
+                node.warn('[Frigate:ZoneFilter] exclude_initial_zones is set but object has not entered any zones yet (new event) — deferring');
+            }
+            return null;
         }
-        return null;
+        // Subsequent update with still-empty entered_zones — object may
+        // never enter a zone. Skip the directional check and allow through.
+    } else {
+        const firstZone = data.enteredZones[0];
+        const matched = excludeInitial.find(p => globToRegex(p).test(firstZone));
+        if (matched) {
+            if (config.debug) {
+                node.warn(`[Frigate:ZoneFilter] Initial zone "${firstZone}" matched exclude_initial_zones pattern "${matched}" — dropping`);
+            }
+            return null;
+        }
     }
 }
 

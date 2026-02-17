@@ -87,8 +87,6 @@ A separate **Silence Action Flow** handles the "Silence" button pressed on notif
 
 Each JavaScript file is a self-contained Node-RED function node. The comments at the top of each file describe its inputs, outputs, and pipeline position.
 
-<img width="3245" height="1895" alt="Flow" src="https://github.com/user-attachments/assets/2b0165f9-0f3b-4923-b7d3-263ce79e1d88" />
-
 ## Setup
 
 ### Prerequisites
@@ -168,6 +166,8 @@ Frigate populates `entered_zones` in traversal order — the first element is th
 - The same person walking **from inside to the street** would have `entered_zones: ["Porch", "Walkway", "Street"]` — first zone is `"Porch"`
 
 With `exclude_initial_zones: ["Porch"]`, the second scenario (leaving) would be filtered out while the first (arriving) would pass through.
+
+**Deferred evaluation:** Frigate's very first MQTT event for a tracked object (`type=new`) often arrives before the object has entered any zone. When `exclude_initial_zones` is configured, the pipeline defers this first event — dropping it but flagging the event ID in flow context so the next MQTT update is re-admitted through Step 1. By that point, `entered_zones` is typically populated and the directional check can evaluate properly. If the object never enters any zone, the deferred update passes through normally (the directional check is skipped since there's no zone to evaluate).
 
 #### Glob Pattern Syntax
 
@@ -430,9 +430,11 @@ Frigate sends many update events per tracked object. Step 1 acts as a gatekeeper
 | Condition | Always Passes? | Notes |
 |-----------|:--------------:|-------|
 | `type === 'end'` | Yes | Detection ended — triggers LLM summary |
+| Event not yet viable (`has_snapshot=false` or `position_changes=0`) | Dropped | Filters ghost detections that Frigate won't persist ([context](https://github.com/blakeblackshear/frigate/discussions/19135)) |
 | `false_positive` flipped `true → false` | Yes | Frigate confirmed the detection is real. More reliable than `type === 'new'`. |
 | `has_clip` flipped `false → true` | Yes | Clip became available |
 | `entered_zones` changed | Yes | Object crossed into a new zone (append-only list, so always significant) |
+| Deferred zone check pending | Yes | A previous `type=new` event was deferred by zone filtering — re-admits for evaluation |
 | `sub_label` or `current_zones` changed | Only if score also improved | Prevents noise from minor zone-boundary fluttering |
 
 All other update events (path data changes, minor score fluctuations, etc.) are dropped.
