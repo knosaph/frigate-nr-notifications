@@ -429,8 +429,8 @@ Frigate sends many update events per tracked object. Step 1 acts as a gatekeeper
 
 | Condition | Always Passes? | Notes |
 |-----------|:--------------:|-------|
+| Event not yet viable (`has_snapshot=false` or `position_changes=0`) | Dropped | Filters ghost detections that Frigate won't persist — applies to all event types including `end` ([context](https://github.com/blakeblackshear/frigate/discussions/19135)) |
 | `type === 'end'` | Yes | Detection ended — triggers LLM summary |
-| Event not yet viable (`has_snapshot=false` or `position_changes=0`) | Dropped | Filters ghost detections that Frigate won't persist ([context](https://github.com/blakeblackshear/frigate/discussions/19135)) |
 | `false_positive` flipped `true → false` | Yes | Frigate confirmed the detection is real. More reliable than `type === 'new'`. |
 | `has_clip` flipped `false → true` | Yes | Clip became available |
 | `entered_zones` changed | Yes | Object crossed into a new zone (append-only list, so always significant) |

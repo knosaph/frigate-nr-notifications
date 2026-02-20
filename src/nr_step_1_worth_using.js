@@ -26,23 +26,28 @@ const after = event.after || {};
 const before = event.before || {};
 const type = event.type || '';
 
-// --- End events are always significant ---
-if (type === 'end') {
-    msg.shouldSendUpdate = true;
-    return msg;
-}
-
 // --- Event viability gate ---
 // Frigate's MQTT topic publishes all raw detections, including those it will
 // never persist (masked objects, truly stationary detections). These have
 // has_snapshot=false and position_changes=0 throughout their lifecycle.
 // Filter them out to avoid notifications linking to "Event not found."
+// Applies to ALL event types including "end" — a ghost detection's end event
+// would otherwise send a notification with broken links, needlessly silence
+// the camera, and waste LLM resources on a non-existent event.
+// For normal detections, has_snapshot and position_changes are set early and
+// never revert, so end events pass this gate without issue.
 // See: https://github.com/blakeblackshear/frigate/discussions/19135
 if (!after.has_snapshot || (after.position_changes || 0) < 1) {
     if (config.debug) {
         node.warn(`[Frigate:ChangeDetect] Event not yet viable (has_snapshot=${after.has_snapshot}, position_changes=${after.position_changes}) — skipping`);
     }
     return null;
+}
+
+// --- End events are always significant ---
+if (type === 'end') {
+    msg.shouldSendUpdate = true;
+    return msg;
 }
 
 // --- For "new" and "update" events, require a meaningful change ---
